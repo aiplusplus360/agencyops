@@ -131,8 +131,8 @@ io.on('connection', (socket) => {
 
 setIo(io);
 
-server.listen(env.port, () => {
-  logger.info(`AgencyOps backend listening on http://localhost:${env.port}`);
+server.listen(env.port, env.host, () => {
+  logger.info(`AgencyOps backend listening on http://${env.host}:${env.port}`);
   startCron();
 });
 

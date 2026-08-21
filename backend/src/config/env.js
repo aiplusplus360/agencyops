@@ -2,6 +2,9 @@ import 'dotenv/config';
 
 export const env = {
   port: parseInt(process.env.PORT || '4000', 10),
+  // Bind host. In production the app is fronted by nginx on the same box, so
+  // it should only listen on loopback; local/LAN dev needs 0.0.0.0.
+  host: process.env.HOST || '0.0.0.0',
   nodeEnv: process.env.NODE_ENV || 'development',
   databaseUrl: process.env.DATABASE_URL,
   jwtSecret: process.env.JWT_SECRET || 'dev-secret',
