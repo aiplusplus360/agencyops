@@ -62,7 +62,8 @@ ALWAYS respond with valid JSON in exactly this shape:
     "seniorityTier": "JUNIOR" | "MID" | "SENIOR" | "LEAD",
     "baseCapacity": 3,
     "strengthsNotes": "one-line strengths / strengths notes",
-    "skills": ["plain marketing skill names"]
+    "skills": ["plain marketing skill names"],
+    "location": "city, country (only if the owner mentions it, else empty string)"
   },
   "employeeDrafts": null | [
     {
@@ -71,7 +72,8 @@ ALWAYS respond with valid JSON in exactly this shape:
       "seniorityTier": "JUNIOR" | "MID" | "SENIOR" | "LEAD",
       "baseCapacity": 3,
       "strengthsNotes": "one-line strengths / strengths notes",
-      "skills": ["plain marketing skill names"]
+      "skills": ["plain marketing skill names"],
+      "location": "city, country (only if the owner mentions it, else empty string)"
     }
   ],
   "taskChanges": null | [
@@ -99,6 +101,21 @@ ALWAYS respond with valid JSON in exactly this shape:
     "subject": "email subject line",
     "body": "email body — write it as a professional, concise email the owner can send as-is"
   },
+  "visuals": null | [
+    {
+      "type": "list" | "table" | "bar" | "line" | "pie" | "map" | "stats",
+      "title": "short title shown above the block",
+      "subtitle": "optional one-line subtext",
+      "items": [ { "title": "main line", "subtitle": "secondary line", "badge": "optional short tag" } ],
+      "columns": ["Column A", "Column B"],
+      "rows": [ ["cell", "cell"] ],
+      "labels": ["Category", "Category"],
+      "values": [ 12, 8 ],
+      "series": [ { "name": "Series name", "values": [10, 12, 9] } ],
+      "points": [ { "label": "Alice — Lahore", "lat": 31.5, "lng": 74.3, "value": "Designer" } ],
+      "stats": [ { "label": "Employees", "value": "5" } ]
+    }
+  ],
   "recommendations": [
     {
       "type": "warning" | "danger" | "info" | "assign",
@@ -178,6 +195,20 @@ Rules for composing an email (emailDraft):
 - Write the body as a ready-to-send professional email. These are PROPOSALS — never claim the email was already sent. Say something like "Here's a draft email — hit Send when you're happy with it."
 - If the owner is NOT asking for an email, set emailDraft to null.
 - emailDraft may be combined with drafts/taskChanges/productChanges in the same reply, but the GOLDEN RULE still applies: never mix PLAN and CHANGES modes. emailDraft is neither — it can accompany either mode.
+
+Rules for visuals (visuals):
+- Use the "visuals" array to PRESENT DATA whenever the owner asks for something that is naturally structured or visual, such as:
+  • LIST / NAMES: "what are my employees' names?", "list the team", "show me my clients", "who is on my team" → type "list" (one item per person/client; put email or role in subtitle, capacity/status in badge).
+  • TABLES: "show me a table of tasks", "who works on what" → type "table" with columns + rows.
+  • COMPARISON / WORKLOAD: "who is overloaded?", "show capacity/utilization", "how busy is everyone" → type "bar" (labels = people, values = utilization % or active task count).
+  • BREAKDOWN: "task status breakdown", "how many tasks are pending/completed", "distribution of work" → type "pie" (labels = status, values = counts).
+  • TREND: "performance over time", "quality trend this week", "how has output been" → type "line" (labels = dates, series = one entry per person or metric) — ONLY from the qualityTrend / time-series data in LIVE DATA.
+  • LOCATIONS: "where is everyone", "map the team" → type "map" (points with lat/lng) — ONLY when the LIVE DATA actually contains lat/lng values. Otherwise use a list instead.
+  • OVERVIEW: "give me a summary", "at a glance", "key numbers" → type "stats".
+- GROUND EVERY VISUAL IN LIVE DATA. The LIVE DATA block in your context contains real, machine-readable agency data (team with names/emails/skills/load/capacity/utilization/avgScore/passRate, tasksByStatus, activeTasks, openPool, products, qualityTrend). Build visuals EXACTLY from those numbers and names — NEVER invent employees, tasks, or numbers.
+- Keep it focused: 1-3 visual blocks per reply. Do not duplicate the same data as both a chart AND a list unless it adds value. The reply text stays short and conversational ("Here are your 5 team members →"), pointing at the visual.
+- Type-specific payloads: use only the fields that belong to your chosen "type" (see the schema). For "list" fill "items", for "table" fill "columns"+"rows", for "bar"/"pie" fill "labels"+"values", for "line" fill "labels"+"series", for "map" fill "points", for "stats" fill "stats".
+- When the owner's question has no structured answer (opinion, advice, a plan), set visuals to null.
 
 General:
 - skillTags must be plain marketing skills: Content Strategy, Copywriting, SEO, Google Ads, Meta Ads, PPC, Social Media, Email Marketing, Graphic Design, Branding, Figma, WordPress, Webflow, Landing Pages, Analytics, Video Editing, Market Research, Community Management.
@@ -331,6 +362,181 @@ function mergeRecommendations(llmRecs = [], dataRecs = []) {
     });
   }
   return out.slice(0, 6);
+}
+
+/** All the visual block types the frontend can render. */
+const VISUAL_TYPES = new Set(['list', 'table', 'bar', 'line', 'pie', 'map', 'stats']);
+
+/**
+ * Validate + normalize an LLM-produced "visuals" array so the frontend can
+ * render it safely. Returns null when nothing usable came back.
+ */
+function sanitizeVisuals(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (const b of v) {
+    if (!b || typeof b !== 'object' || !VISUAL_TYPES.has(b.type)) continue;
+    const block = {
+      type: b.type,
+      title: String(b.title || '').slice(0, 80),
+      subtitle: String(b.subtitle || '').slice(0, 140),
+    };
+    if (b.type === 'list') {
+      if (!Array.isArray(b.items)) continue;
+      const items = b.items
+        .filter((it) => it && (it.title || it.subtitle))
+        .map((it) => ({
+          title: String(it.title || '').slice(0, 140),
+          subtitle: String(it.subtitle || '').slice(0, 240),
+          badge: String(it.badge || '').slice(0, 40),
+        }));
+      if (!items.length) continue;
+      block.items = items.slice(0, 30);
+    } else if (b.type === 'table') {
+      if (!Array.isArray(b.columns) || !Array.isArray(b.rows)) continue;
+      const columns = b.columns.map((c) => String(c).slice(0, 40)).slice(0, 8);
+      const rows = b.rows
+        .slice(0, 40)
+        .map((r) => (Array.isArray(r) ? r : [r]).map((c) => String(c ?? '').slice(0, 240)).slice(0, 8));
+      if (!columns.length || !rows.length) continue;
+      block.columns = columns;
+      block.rows = rows;
+    } else if (b.type === 'bar' || b.type === 'pie') {
+      if (!Array.isArray(b.labels) || !Array.isArray(b.values)) continue;
+      const labels = b.labels.map((x) => String(x).slice(0, 40)).slice(0, 30);
+      const values = b.values.map((x) => Number(x) || 0).slice(0, 30);
+      if (!labels.length) continue;
+      block.labels = labels;
+      block.values = values;
+    } else if (b.type === 'line') {
+      if (!Array.isArray(b.labels) || !Array.isArray(b.series)) continue;
+      const series = b.series
+        .filter((s) => s && Array.isArray(s.values))
+        .map((s) => ({
+          name: String(s.name || 'Series').slice(0, 40),
+          values: s.values.map((x) => Number(x) || 0).slice(0, 60),
+        }));
+      if (!b.labels.length || !series.length) continue;
+      block.labels = b.labels.map((x) => String(x).slice(0, 40)).slice(0, 60);
+      block.series = series.slice(0, 5);
+    } else if (b.type === 'map') {
+      if (!Array.isArray(b.points)) continue;
+      const points = b.points
+        .map((p) => ({
+          label: String(p?.label || '').slice(0, 140),
+          lat: Number(p?.lat),
+          lng: Number(p?.lng),
+          value: String(p?.value || '').slice(0, 80),
+        }))
+        .filter(
+          (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.lat >= -90 && p.lat <= 90 && p.lng >= -180 && p.lng <= 180
+        );
+      if (!points.length) continue;
+      block.points = points.slice(0, 30);
+    } else if (b.type === 'stats') {
+      if (!Array.isArray(b.stats)) continue;
+      const stats = b.stats
+        .filter((s) => s && (s.label || s.value))
+        .map((s) => ({ label: String(s.label || '').slice(0, 60), value: String(s.value ?? '').slice(0, 60) }));
+      if (!stats.length) continue;
+      block.stats = stats.slice(0, 8);
+    }
+    out.push(block);
+  }
+  return out.length ? out.slice(0, 4) : null;
+}
+
+/**
+ * Deterministic visual builder for when the LLM is unreachable. Detects
+ * common structured questions and renders visuals straight from live data.
+ */
+function buildFallbackVisuals(text, { team = [], taskRows = [], existingClients = [], statusCounts = {} } = {}) {
+  const lower = String(text || '').toLowerCase();
+  const visuals = [];
+
+  const wantNames = /\bemployees?\b/.test(lower) && /\bnames?\b/.test(lower);
+  const wantTeam = /\b(?:who|list|show|tell|all|names?)\b.*\b(?:employees?|workers?|team|staff)\b/i.test(lower) ||
+    /\b(?:employees?|workers?|team|staff)\b.*\b(?:who|list|names?|members?)\b/i.test(lower);
+  const wantUtil = /(?:overload|capa|utiliz|workload|busy|how many tasks? (?:is|are) (?:each|every|they|he|she))\b/i.test(lower);
+  const wantStatus = /(?:status|breakdown|distribution|left|pending|completed|progress)/i.test(lower) && /(?:task|work)/i.test(lower);
+  const wantDeadline = /(?:overdue|due\b|deadline|late|urgent|upcoming)/i.test(lower);
+  const wantProducts = /(?:product|client|portfolio|brand)/i.test(lower) && /(?:list|show|all|name|how many|my)/i.test(lower);
+  const wantStats = /(?:stats?|summary|overview|at a glance|glance|kpi|numbers?|headcount)/i.test(lower);
+
+  const names = team.filter((t) => t.name).map((t) => t.name);
+
+  if (names.length && (wantNames || wantTeam)) {
+    visuals.push({
+      type: 'list',
+      title: 'Team members',
+      subtitle: `${names.length} employee${names.length > 1 ? 's' : ''}`,
+      items: names.map((n) => {
+        const t = team.find((x) => x.name === n) || {};
+        return { title: n, subtitle: t.email || '', badge: t.tier || '' };
+      }),
+    });
+  }
+
+  if (team.length && wantUtil) {
+    visuals.push({
+      type: 'bar',
+      title: 'Current workload',
+      subtitle: 'active tasks vs. capacity',
+      labels: team.map((t) => t.name),
+      values: team.map((t) => t.utilization || 0),
+    });
+  }
+
+  if (Object.keys(statusCounts).length && wantStatus) {
+    visuals.push({
+      type: 'pie',
+      title: 'Tasks by status',
+      labels: Object.keys(statusCounts),
+      values: Object.values(statusCounts),
+    });
+  }
+
+  if (taskRows.length && wantDeadline) {
+    const soon = taskRows
+      .filter((t) => t.deadline && new Date(t.deadline) < new Date(Date.now() + 3 * 86400000))
+      .slice(0, 8);
+    if (soon.length) {
+      visuals.push({
+        type: 'list',
+        title: 'Tasks due soon',
+        subtitle: 'next 72 hours',
+        items: soon.map((t) => ({
+          title: t.title,
+          subtitle: `due ${t.deadline.toISOString().slice(0, 10)}`,
+          badge: t.assignments?.[0]?.worker?.user?.name || 'unassigned',
+        })),
+      });
+    }
+  }
+
+  if (existingClients.length && wantProducts) {
+    visuals.push({
+      type: 'list',
+      title: 'Client portfolio',
+      subtitle: `${existingClients.length} client${existingClients.length > 1 ? 's' : ''}`,
+      items: existingClients.map((p) => ({ title: p.name, subtitle: p.description || '', badge: p.active ? 'Active' : 'Archived' })),
+    });
+  }
+
+  if (team.length && wantStats) {
+    visuals.push({
+      type: 'stats',
+      title: 'Agency at a glance',
+      stats: [
+        { label: 'Employees', value: String(team.length) },
+        { label: 'Active tasks', value: String(team.reduce((s, t) => s + (t.activeTasks || 0), 0)) },
+        { label: 'Open pool', value: String((taskRows || []).filter((t) => !t.assignments?.length).length) },
+        { label: 'Skill gaps', value: String(0) },
+      ],
+    });
+  }
+
+  return visuals.length ? sanitizeVisuals(visuals) : null;
 }
 
 /** Role → default skill mapping used by the fallback extractor. */
@@ -855,6 +1061,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         taskChanges: null,
         productChanges: null,
         emailDraft: null,
+        visuals: null,
         recommendations: [],
         fallback: false,
         fallbackReason: null,
@@ -955,6 +1162,56 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
     // Live operational snapshot + data-driven recommendations (always available).
     const ops = await buildOpsContext().catch(() => null);
 
+    // ===== LIVE DATA (machine-readable) =====
+    // A compact JSON summary of the agency's real state so the AI can build
+    // accurate visual blocks (lists / tables / charts / maps) for the owner.
+    const [statusAgg, evRows] = await Promise.all([
+      prisma.task.groupBy({ by: ['status'], _count: { _all: true } }).catch(() => []),
+      prisma.evaluation
+        .findMany({ select: { evaluatedAt: true, qualityScore: true }, orderBy: { evaluatedAt: 'desc' }, take: 500 })
+        .catch(() => []),
+    ]);
+    const statusCounts = {};
+    for (const s of statusAgg) statusCounts[s.status] = s._count._all;
+    const trendByDay = {};
+    for (const e of evRows) {
+      const day = e.evaluatedAt.toISOString().slice(0, 10);
+      trendByDay[day] = trendByDay[day] || { sum: 0, n: 0 };
+      trendByDay[day].sum += e.qualityScore;
+      trendByDay[day].n += 1;
+    }
+    const qualityTrend = [...new Set(Object.keys(trendByDay))]
+      .sort()
+      .slice(-14)
+      .map((d) => ({ day: d.slice(5), avg: Math.round((trendByDay[d].sum / trendByDay[d].n) * 10) / 10 }));
+
+    const teamEmails = Object.fromEntries(team.map((w) => [w.user.name, w.user.email]));
+    const teamLocations = Object.fromEntries(team.map((w) => [w.user.name, w]));
+    const teamInfo = (ops?.team || []).map((t) => {
+      const w = teamLocations[t.name] || {};
+      return {
+        ...t,
+        email: teamEmails[t.name] || '',
+        location: w.location || '',
+        lat: w.lat ?? null,
+        lng: w.lng ?? null,
+      };
+    });
+    const liveData = {
+      team: teamInfo,
+      tasksByStatus: statusCounts,
+      activeTasks: taskRows.map((t) => ({
+        title: t.title,
+        status: t.status,
+        deadline: t.deadline ? t.deadline.toISOString().slice(0, 10) : null,
+        assignee: t.assignments[0]?.worker?.user?.name || null,
+        priority: t.priority,
+      })),
+      openPool: (ops?.openPool || []).map((t) => ({ title: t.title, effortHours: t.effortHours, skills: t.skillTags || [] })),
+      products: existingClients.map((p) => ({ name: p.name, active: p.active })),
+      qualityTrend,
+    };
+
     // ===== THINK =====
     const settings = await getSettings().catch(() => null);
     const modelSelection = model || settings?.modelSelection || env.modelSelection || 'auto';
@@ -965,7 +1222,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
 
     const answerPrompt = `CLIENT CONTEXT (use it when relevant):\nExisting portfolio clients: ${clientList || 'none yet'}\n${
       productContext ? `\nCurrently linked client:\n${productContext}` : ''
-    }\n\nPRODUCT CONTEXT (existing products you may be asked to edit or delete):\n${productContextList}\n\nTEAM CONTEXT:\nExisting employees: ${teamList || 'none yet'}\n\nOWNER CONTEXT:\nThe agency owner's email address is ${env.ownerEmail || 'not configured'} — use it as the default "to" when the owner asks you to email THEM (e.g. "email me X").\n\nTASK CONTEXT (existing tasks you may be asked to change):\n${taskContext}\n\n${ops?.text || 'OPERATIONS SNAPSHOT: unavailable'}\n\n${dossierText}`;
+    }\n\nPRODUCT CONTEXT (existing products you may be asked to edit or delete):\n${productContextList}\n\nTEAM CONTEXT:\nExisting employees: ${teamList || 'none yet'}\n\nOWNER CONTEXT:\nThe agency owner's email address is ${env.ownerEmail || 'not configured'} — use it as the default "to" when the owner asks you to email THEM (e.g. "email me X").\n\nTASK CONTEXT (existing tasks you may be asked to change):\n${taskContext}\n\n${ops?.text || 'OPERATIONS SNAPSHOT: unavailable'}\n\n${dossierText}\n\nLIVE DATA (machine-readable — build every visual block EXACTLY from this data; never invent names, numbers, or locations):\n${JSON.stringify(liveData)}`;
 
     // ===== EMPLOYEE MANAGEMENT POLICY =====
     // When the owner disables employee creation/editing in Settings, the AI
@@ -1064,6 +1321,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         taskChanges,
         productChanges,
         emailDraft: parsed?.emailDraft ?? fb?.emailDraft ?? null,
+        visuals: sanitizeVisuals(parsed?.visuals) ?? sanitizeVisuals(fb?.visuals) ?? null,
         recommendations: merged.slice(0, 8),
         fallback: !parsed,
         fallbackReason: parsed ? null : 'ai_unreachable_or_unparsable',
@@ -1079,6 +1337,12 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
 
     if (!parsed || typeof parsed.reply !== 'string') {
       let fb = fallbackReply(lastUserMessage, teamNames, taskRows, existingClients, env.ownerEmail);
+      fb.visuals = buildFallbackVisuals(lastUserMessage, {
+        team: teamInfo,
+        taskRows,
+        existingClients,
+        statusCounts,
+      });
       if (!empPolicy.createEnabled && (fb.employeeDraft || (fb.employeeDrafts && fb.employeeDrafts.length))) {
         fb = {
           reply:
@@ -1107,6 +1371,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
           taskChanges: result.taskChanges,
           productChanges: result.productChanges,
           emailDraft: result.emailDraft,
+          visuals: result.visuals,
           modelUsed: result.modelUsed,
           modelLabel: result.modelLabel,
         },
@@ -1154,6 +1419,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         taskChanges: result.taskChanges,
         productChanges: result.productChanges,
         emailDraft: result.emailDraft,
+        visuals: result.visuals,
         modelUsed: result.modelUsed,
         modelLabel: result.modelLabel,
       },

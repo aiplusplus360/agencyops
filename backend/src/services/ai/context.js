@@ -26,7 +26,11 @@ export async function buildOpsContext() {
     prisma.evaluation.findMany({
       orderBy: { evaluatedAt: 'desc' },
       take: 200,
-      select: { workerId: true, qualityScore: true, verdict: true, taskId: true },
+      select: {
+        submission: { select: { workerId: true } },
+        qualityScore: true,
+        verdict: true,
+      },
     }),
     prisma.task.findMany({
       where: { status: { notIn: ['COMPLETED', 'SUBMITTED'] } },
@@ -38,10 +42,12 @@ export async function buildOpsContext() {
 
   const perfMap = {};
   for (const ev of recentEvaluations) {
-    perfMap[ev.workerId] = perfMap[ev.workerId] || { sum: 0, n: 0, passes: 0 };
-    perfMap[ev.workerId].sum += ev.qualityScore;
-    perfMap[ev.workerId].n += 1;
-    if (ev.verdict === 'PASS') perfMap[ev.workerId].passes += 1;
+    const wid = ev.submission?.workerId;
+    if (!wid) continue;
+    perfMap[wid] = perfMap[wid] || { sum: 0, n: 0, passes: 0 };
+    perfMap[wid].sum += ev.qualityScore;
+    perfMap[wid].n += 1;
+    if (ev.verdict === 'PASS') perfMap[wid].passes += 1;
   }
 
   const team = workers.map((w) => {

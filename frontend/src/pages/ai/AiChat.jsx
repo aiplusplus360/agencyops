@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { Badge } from '../../components/ui';
 import { useSocket } from '../../context/SocketContext';
+import VisualBlocks from './VisualBlocks';
 
 const HORIZON_LABEL = { D15: '15-Day Runway', D30: '30-Day Milestones', D60_90: '60-90 Day Horizons' };
 const HORIZON_COLOR = {
@@ -16,6 +17,8 @@ const SUGGESTIONS = [
   'Set up Google Ads for Vertex Fitness to drive membership leads, give it to Bob',
   'Add a new product: an organic dog food brand called PupJoy, target is millennial pet parents, they sell on Shopify',
   'Hire a senior graphic designer named Fiona Lee — strong in branding and Figma',
+  'What are my employees names?',
+  'Who is overloaded right now?',
 ];
 
 const SUGGESTION_META = [
@@ -24,6 +27,8 @@ const SUGGESTION_META = [
   { icon: 'target', chip: 'bg-gradient-to-br from-fuchsia-500 to-pink-500', border: 'border-fuchsia-100 hover:border-fuchsia-300 hover:shadow-fuchsia-200/60' },
   { icon: 'package', chip: 'bg-gradient-to-br from-amber-500 to-orange-500', border: 'border-amber-100 hover:border-amber-300 hover:shadow-amber-200/60' },
   { icon: 'users', chip: 'bg-gradient-to-br from-emerald-500 to-teal-500', border: 'border-emerald-100 hover:border-emerald-300 hover:shadow-emerald-200/60' },
+  { icon: 'users', chip: 'bg-gradient-to-br from-sky-500 to-cyan-500', border: 'border-sky-100 hover:border-sky-300 hover:shadow-sky-200/60' },
+  { icon: 'chart', chip: 'bg-gradient-to-br from-rose-500 to-red-500', border: 'border-rose-100 hover:border-rose-300 hover:shadow-rose-200/60' },
 ];
 
 const CLIENT_FIELDS = [
@@ -178,6 +183,12 @@ const Icon = {
   Sparkles: (p) => (
     <svg {...iconProps} {...p}><path d="M9.9 2.3 11.5 7l4.7 1.6-4.7 1.6-1.6 4.7-1.6-4.7L4 8.6 8.7 7z" /><path d="M19 13l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" /></svg>
   ),
+  Chart: (p) => (
+    <svg {...iconProps} {...p}><path d="M4 20V10M10 20V4M16 20v-9M22 20H2" /></svg>
+  ),
+  MapPin: (p) => (
+    <svg {...iconProps} {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+  ),
 };
 
 /** Vibrant "AI is thinking" indicator — bouncing gradient dots + sparkle. */
@@ -216,6 +227,24 @@ function PillSelect({ value, onChange, title, className = '', children }) {
       <Icon.ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
     </div>
   );
+}
+
+/** Best-effort city → lat/lng lookup (OpenStreetMap Nominatim). Returns null when offline or unknown. */
+async function geocodeLocation(location) {
+  const q = String(location || '').trim();
+  if (!q) return null;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    const data = await res.json();
+    if (Array.isArray(data) && data[0]) {
+      const lat = Number(data[0].lat);
+      const lng = Number(data[0].lon);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    }
+  } catch {}
+  return null;
 }
 
 export default function AiChat() {
@@ -345,6 +374,7 @@ export default function AiChat() {
           role: 'assistant',
           content: res.reply,
           draft: res.draft || null,
+          visuals: res.visuals || null,
           recommendations: res.recommendations || [],
           thinking: res.thinking || null,
           review: res.review || null,
@@ -379,6 +409,9 @@ export default function AiChat() {
           baseCapacity: res.employeeDraft.baseCapacity || prev?.baseCapacity || 3,
           strengthsNotes: res.employeeDraft.strengthsNotes || prev?.strengthsNotes || '',
           skills: res.employeeDraft.skills || prev?.skills || [],
+          location: res.employeeDraft.location || prev?.location || '',
+          lat: res.employeeDraft.lat || prev?.lat || null,
+          lng: res.employeeDraft.lng || prev?.lng || null,
         }));
         setEmployeeMsg(null);
         setEmployeeDrafts(null);
@@ -390,6 +423,9 @@ export default function AiChat() {
           baseCapacity: e.baseCapacity || 3,
           strengthsNotes: e.strengthsNotes || '',
           skills: e.skills || [],
+          location: e.location || '',
+          lat: e.lat || null,
+          lng: e.lng || null,
         })));
         setEmployeeDraft(null);
         setEmployeeMsg(null);
@@ -515,6 +551,7 @@ export default function AiChat() {
         role: m.role,
         content: m.content,
         draft: m.draft || null,
+        visuals: m.meta?.visuals || null,
         recommendations: m.meta?.recommendations || [],
         thinking: m.meta?.thinking || null,
         review: m.meta?.review || null,
@@ -637,7 +674,12 @@ export default function AiChat() {
     setSavingEmployee(true);
     setError(null);
     try {
-      const res = await api.post('/users', employeeDraft);
+      const payload = { ...employeeDraft };
+      if (payload.location && (!payload.lat || !payload.lng)) {
+        const geo = await geocodeLocation(payload.location);
+        if (geo) { payload.lat = geo.lat; payload.lng = geo.lng; }
+      }
+      const res = await api.post('/users', payload);
       setEmployeeMsg({
         type: 'ok',
         text: `"${res.name}" was added to the team (${res.email}). Their login password is: ${res.password} — share it with them.`,
@@ -660,7 +702,16 @@ export default function AiChat() {
     setError(null);
     setEmployeeMsg(null);
     try {
-      const res = await api.post('/users/bulk', { employees: employeeDrafts });
+      const employees = [];
+      for (const d of employeeDrafts) {
+        const emp = { ...d };
+        if (emp.location && (!emp.lat || !emp.lng)) {
+          const geo = await geocodeLocation(emp.location);
+          if (geo) { emp.lat = geo.lat; emp.lng = geo.lng; }
+        }
+        employees.push(emp);
+      }
+      const res = await api.post('/users/bulk', { employees });
       const ok = res.created || [];
       const errs = res.errors || [];
       if (ok.length) {
@@ -1034,6 +1085,7 @@ export default function AiChat() {
                   </div>
                 )}
                 <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.role === 'assistant' && m.visuals?.length > 0 && <VisualBlocks visuals={m.visuals} />}
               {m.role === 'assistant' && (m.thinking?.evidence?.length || m.thinking?.gaps?.length || m.thinking?.risks?.length || m.thinking?.plan || m.webResearch?.queries?.length || m.webResearch?.sources?.length) && (
                 <div className="mt-3 border-t border-violet-100/70 pt-2">
                   <button
@@ -1327,6 +1379,24 @@ export default function AiChat() {
                 <label className="label">Base capacity (max concurrent tasks)</label>
                 <input className="input" type="number" min="1" max="10" value={employeeDraft.baseCapacity || 3} onChange={(e) => updateEmployeeField('baseCapacity', Number(e.target.value))} />
               </div>
+              <div>
+                <label className="label">Location (city)</label>
+                <div className="relative">
+                  <input
+                    className="input pr-9"
+                    value={employeeDraft.location || ''}
+                    onChange={(e) => updateEmployeeField('location', e.target.value)}
+                    onBlur={async (e) => {
+                      if (!String(e.target.value || '').trim()) return;
+                      const geo = await geocodeLocation(e.target.value);
+                      setEmployeeDraft((p) => (geo ? { ...p, lat: geo.lat, lng: geo.lng } : { ...p, lat: null, lng: null }));
+                    }}
+                    placeholder="e.g. Lahore, Pakistan"
+                  />
+                  <Icon.MapPin className={`pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${employeeDraft.lat && employeeDraft.lng ? 'text-sky-500' : 'text-slate-300'}`} />
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">Used to plot your team on the map.</p>
+              </div>
               <div className="md:col-span-2">
                 <label className="label">Strengths & notes</label>
                 <textarea className="input" rows={2} value={employeeDraft.strengthsNotes || ''} onChange={(e) => updateEmployeeField('strengthsNotes', e.target.value)} placeholder="e.g. Strong visual design, great with brand systems" />
@@ -1431,6 +1501,24 @@ export default function AiChat() {
                         value={ed.baseCapacity || 3}
                         onChange={(e) => updateBulkEmployeeField(idx, 'baseCapacity', Number(e.target.value))}
                       />
+                    </div>
+                    <div>
+                      <label className="label">Location (city)</label>
+                      <div className="relative">
+                        <input
+                          className="input pr-9"
+                          value={ed.location || ''}
+                          onChange={(e) => updateBulkEmployeeField(idx, 'location', e.target.value)}
+                          onBlur={async (e) => {
+                            if (!String(e.target.value || '').trim()) return;
+                            const geo = await geocodeLocation(e.target.value);
+                            updateBulkEmployeeField(idx, 'lat', geo ? geo.lat : null);
+                            updateBulkEmployeeField(idx, 'lng', geo ? geo.lng : null);
+                          }}
+                          placeholder="e.g. Islamabad, Pakistan"
+                        />
+                        <Icon.MapPin className={`pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${ed.lat && ed.lng ? 'text-sky-500' : 'text-slate-300'}`} />
+                      </div>
                     </div>
                     <div className="md:col-span-2">
                       <label className="label">Strengths & notes</label>

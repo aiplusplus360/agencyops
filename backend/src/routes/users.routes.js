@@ -31,6 +31,9 @@ router.get('/me', auth, async (req, res) => {
           availability: worker.availability,
           availabilityUntil: worker.availabilityUntil,
           strengthsNotes: worker.strengthsNotes,
+          location: worker.location,
+          lat: worker.lat,
+          lng: worker.lng,
           skills: worker.skills.map((s) => ({ id: s.skillId, name: s.skill.name, proficiency: s.proficiency })),
         }
       : null,
@@ -105,7 +108,7 @@ router.get('/', auth, adminOnly, async (req, res, next) => {
 });
 
 /** Create a single worker account (User + Worker + skills) atomically. Throws on invalid input / duplicate email. */
-async function createWorker({ name, email, password, seniorityTier = 'MID', baseCapacity = 3, strengthsNotes, skills = [] }) {
+async function createWorker({ name, email, password, seniorityTier = 'MID', baseCapacity = 3, strengthsNotes, skills = [], location, lat, lng }) {
   if (!name || !String(name).trim()) throw new Error('Employee name is required');
   if (!email || !String(email).trim()) throw new Error('Employee email is required');
 
@@ -123,6 +126,10 @@ async function createWorker({ name, email, password, seniorityTier = 'MID', base
 
   const tier = ['JUNIOR', 'MID', 'SENIOR', 'LEAD'].includes(seniorityTier) ? seniorityTier : 'MID';
   const cap = Number(baseCapacity) >= 1 && Number(baseCapacity) <= 10 ? Number(baseCapacity) : 3;
+  const latNum = Number(lat);
+  const lngNum = Number(lng);
+  const validLat = Number.isFinite(latNum) && latNum >= -90 && latNum <= 90;
+  const validLng = Number.isFinite(lngNum) && lngNum >= -180 && lngNum <= 180;
 
   // Ensure the named skills exist in the registry, then attach them.
   const skillRows = await Promise.all(
@@ -146,6 +153,9 @@ async function createWorker({ name, email, password, seniorityTier = 'MID', base
           baseCapacity: cap,
           effectiveCapacity: cap,
           strengthsNotes: strengthsNotes || undefined,
+          location: location ? String(location).slice(0, 120) : undefined,
+          lat: validLat ? latNum : undefined,
+          lng: validLng ? lngNum : undefined,
           skills: { create: skillRows.map((s) => ({ skillId: s.id, proficiency: 3 })) },
         },
       },
@@ -225,12 +235,21 @@ router.patch('/:id', auth, adminOnly, async (req, res, next) => {
     if (!policy.editEnabled) {
       return res.status(403).json({ error: 'Employee editing is currently disabled in Settings → Employee Management.' });
     }
-    const { active, role, name } = req.body;
+    const { active, role, name, location, lat, lng } = req.body;
     const data = {};
     if (active !== undefined) data.active = active;
     if (role) data.role = role;
     if (name) data.name = name;
     const user = await prisma.user.update({ where: { id: req.params.id }, data });
+    const workerData = {};
+    if (location !== undefined) workerData.location = String(location).slice(0, 120);
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    if (Number.isFinite(latNum) && latNum >= -90 && latNum <= 90) workerData.lat = latNum;
+    if (Number.isFinite(lngNum) && lngNum >= -180 && lngNum <= 180) workerData.lng = lngNum;
+    if (Object.keys(workerData).length) {
+      await prisma.worker.update({ where: { userId: req.params.id }, data: workerData });
+    }
     await logActivity(req.user.id, 'user.update', 'user', user.id);
     res.json(user);
   } catch (e) { next(e); }

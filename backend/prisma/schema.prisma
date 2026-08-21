@@ -142,6 +142,9 @@ model Worker {
   availability      AvailabilityStatus @default(ACTIVE)
   availabilityUntil DateTime?
   strengthsNotes    String?
+  location          String?
+  lat               Float?
+  lng               Float?
   skills            WorkerSkill[]
   assignments       Assignment[]
   availabilityLogs  AvailabilityLog[]
