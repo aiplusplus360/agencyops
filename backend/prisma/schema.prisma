@@ -1,0 +1,577 @@
+// Prisma schema for AI-COO Task Manager
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum Role {
+  ADMIN
+  WORKER
+}
+
+enum AvailabilityStatus {
+  ACTIVE
+  AT_CAPACITY
+  ON_LEAVE
+  BACK_TOMORROW
+}
+
+enum TaskStatus {
+  PENDING
+  WORKING_ON_IT
+  BLOCKED
+  SUBMITTED
+  IN_REVISION
+  COMPLETED
+}
+
+enum Horizon {
+  D15
+  D30
+  D60_90
+}
+
+enum VisionStatus {
+  DRAFT
+  PROCESSING
+  LIVE
+  REJECTED
+}
+
+enum Verdict {
+  PASS
+  REVISE
+}
+
+enum AiDecisionType {
+  ASSIGNMENT
+  EVALUATION
+  AUTO_GENERATE
+  REVISION
+  REASSIGN
+  FORECAST
+  CAPACITY_SCALING
+  LEARNING_ADJUSTMENT
+}
+
+enum AppealStatus {
+  PENDING
+  UPHELD
+  REJECTED
+}
+
+enum DigestPeriod {
+  DAILY
+  WEEKLY
+}
+
+enum AssignedBy {
+  AI
+  ADMIN
+}
+
+enum RecurringStatus {
+  PENDING
+  GENERATED
+  SKIPPED
+}
+
+// ============ AUTH & USERS ============
+
+model User {
+  id            String      @id @default(cuid())
+  email         String      @unique
+  username      String?     @unique
+  passwordHash  String
+  pinHash       String?
+  name          String
+  role          Role        @default(WORKER)
+  avatar        String?
+  active        Boolean     @default(true)
+  emailNotifs   Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  worker        Worker?
+  sessions      Session[]
+  notifications Notification[]
+  activities    ActivityLog[]
+  visions       Vision[]        @relation("VisionAuthor")
+  taskNotes     TaskNote[]
+  aiDecisions   AiDecision[]
+  digests       Digest[]
+  evaluations   Evaluation[]    @relation("EvaluationOverrider")
+  appeals       Appeal[]
+  learning      LearningAdjustment[]
+  memories      Memory[]
+  conversations Conversation[]
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ============ WORKERS & SKILLS ============
+
+model Worker {
+  id                String             @id @default(cuid())
+  userId            String             @unique
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seniorityTier     String             @default("MID") // JUNIOR / MID / SENIOR / LEAD
+  baseCapacity      Int                @default(3)
+  effectiveCapacity Int                @default(3)
+  scalingFactor     Float              @default(1.0)
+  scalingState      String             @default("STEADY") // UP / STEADY / DOWN
+  scalingLocked     Boolean            @default(false)
+  availability      AvailabilityStatus @default(ACTIVE)
+  availabilityUntil DateTime?
+  strengthsNotes    String?
+  skills            WorkerSkill[]
+  assignments       Assignment[]
+  availabilityLogs  AvailabilityLog[]
+  submissions       Submission[]
+  appeals           Appeal[]
+  briefFeedback     BriefFeedback[]
+  taskActivity      TaskActivity[]
+}
+
+model Skill {
+  id           String         @id @default(cuid())
+  name         String         @unique
+  workerSkills WorkerSkill[]
+}
+
+model WorkerSkill {
+  workerId    String
+  skillId     String
+  proficiency Int @default(3) // 1-5
+  worker      Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  skill       Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([workerId, skillId])
+}
+
+// ============ PRODUCTS & KNOWLEDGE BASE ============
+
+model Product {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  targetUsers String?
+  techStack   String?
+  goals       String?
+  fileRefs    Json?
+  active      Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  documents  ProductDocument[]
+  visions    VisionProduct[]
+  tasks      Task[]
+  templates  TaskTemplate[]
+}
+
+model ProductDocument {
+  id            String   @id @default(cuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fileRef       String
+  extractedText String?
+  embeddingsRef String?
+  uploadedAt    DateTime @default(now())
+}
+
+// ============ VISION & ROADMAP ============
+
+model Vision {
+  id         String       @id @default(cuid())
+  adminId    String
+  admin      User         @relation("VisionAuthor", fields: [adminId], references: [id])
+  rawText    String
+  transcript String?
+  fileRefs   Json?
+  status     VisionStatus @default(DRAFT)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  products VisionProduct[]
+  roadmaps Roadmap[]
+}
+
+model VisionProduct {
+  visionId   String
+  productId  String
+  vision     Vision  @relation(fields: [visionId], references: [id], onDelete: Cascade)
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([visionId, productId])
+}
+
+model Roadmap {
+  id          String   @id @default(cuid())
+  visionId    String
+  vision      Vision   @relation(fields: [visionId], references: [id], onDelete: Cascade)
+  horizon     Horizon
+  title       String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+
+  tasks Task[]
+}
+
+// ============ TASKS ============
+
+model Task {
+  id                 String            @id @default(cuid())
+  roadmapId          String?
+  roadmap            Roadmap?          @relation(fields: [roadmapId], references: [id], onDelete: SetNull)
+  productId          String?
+  product            Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title              String
+  description        String?
+  acceptanceCriteria Json?
+  skillTags          Json?             // string[]
+  priority           Int               @default(2) // 1 high, 2 normal, 3 low
+  effortHours        Int               @default(4)
+  status             TaskStatus        @default(PENDING)
+  qualityThreshold   Int               @default(70)
+  deadline           DateTime
+  autoGenerated      Boolean           @default(false)
+  sourceVision       String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  assignments    Assignment[]
+  submissions    Submission[]
+  activities     TaskActivity[]
+  notes          TaskNote[]
+  appeals        Appeal[]
+  briefFeedback  BriefFeedback[]
+  dependencies   TaskDependency[] @relation("DependentTask")
+  dependents     TaskDependency[] @relation("DependencyTask")
+}
+
+model TaskDependency {
+  dependencyId String
+  dependentId  String
+  dependency   Task @relation("DependencyTask", fields: [dependencyId], references: [id], onDelete: Cascade)
+  dependent    Task @relation("DependentTask", fields: [dependentId], references: [id], onDelete: Cascade)
+
+  @@id([dependencyId, dependentId])
+}
+
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workerId  String?
+  worker    Worker?  @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  type      String   // assigned / started / status_change / submitted / evaluated / confirmed / reassigned / escalated
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model TaskNote {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+}
+
+model BriefFeedback {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workerId  String
+  worker    Worker   @relation(fields: [workerId], references: [id])
+  note      String
+  createdAt DateTime @default(now())
+}
+
+// ============ ASSIGNMENT & EXECUTION ============
+
+model Assignment {
+  id                 String     @id @default(cuid())
+  taskId             String
+  task               Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workerId           String
+  worker             Worker     @relation(fields: [workerId], references: [id])
+  compatibilityScore Float
+  rationale          String?
+  assignedBy         AssignedBy @default(AI)
+  assignedAt         DateTime   @default(now())
+  startedAt          DateTime?
+  submittedAt        DateTime?
+  confirmedAt        DateTime?
+  active             Boolean    @default(true)
+
+  @@index([workerId, active])
+  @@index([taskId])
+}
+
+model Submission {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workerId    String
+  worker      Worker   @relation(fields: [workerId], references: [id])
+  text        String
+  logs        String?
+  outputLinks Json?
+  files       Json?
+  attemptNo   Int      @default(1)
+  submittedAt DateTime @default(now())
+
+  evaluations Evaluation[]
+}
+
+model Evaluation {
+  id               String   @id @default(cuid())
+  submissionId     String
+  submission       Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  intentScore      Float
+  completenessScore Float
+  deadlineScore    Float
+  qualityScore     Float
+  verdict          Verdict
+  critique         String
+  evaluatedAt      DateTime @default(now())
+  overriddenBy     String?
+  overriddenAt     DateTime?
+  overrideNote     String?
+
+  overrider User?  @relation("EvaluationOverrider", fields: [overriddenBy], references: [id], onDelete: SetNull)
+}
+
+model Revision {
+  id          String   @id @default(cuid())
+  taskId      String
+  workerId    String
+  reason      String
+  critiqueRef String?
+  createdAt   DateTime @default(now())
+}
+
+model Appeal {
+  id          String       @id @default(cuid())
+  taskId      String
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workerId    String
+  worker      Worker       @relation(fields: [workerId], references: [id])
+  reason      String
+  status      AppealStatus @default(PENDING)
+  reviewedBy  String?
+  reviewer    User?        @relation(fields: [reviewedBy], references: [id], onDelete: SetNull)
+  reviewNote  String?
+  createdAt   DateTime     @default(now())
+}
+
+// ============ AI INTELLIGENCE ============
+
+model AiDecision {
+  id        String        @id @default(cuid())
+  type      AiDecisionType
+  entityId  String?
+  decision  Json
+  rationale String?
+  snapshot  Json?
+  createdBy String?
+  creator   User?         @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt DateTime      @default(now())
+
+  @@index([type, createdAt])
+}
+
+model LearningAdjustment {
+  id             String   @id @default(cuid())
+  aiDecisionRef  String?
+  overrideType   String   // SCORE / ASSIGNMENT / VETO
+  adjustment     Json
+  applied        Boolean  @default(false)
+  note           String?
+  createdBy      String?
+  creator        User?    @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+}
+
+model ApiUsageLog {
+  id          String   @id @default(cuid())
+  engine      String
+  model       String?
+  tokensIn    Int      @default(0)
+  tokensOut   Int      @default(0)
+  estCostUsd  Float    @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([engine, createdAt])
+}
+
+// ============ TEMPLATES & RECURRING ============
+
+model TaskTemplate {
+  id                 String    @id @default(cuid())
+  name               String
+  title              String
+  description        String?
+  acceptanceCriteria Json?
+  skillTags          Json?
+  effortHours        Int       @default(4)
+  cadence            String    // DAILY / WEEKLY / MONTHLY
+  productId          String?
+  product            Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  active             Boolean   @default(true)
+  createdBy          String?
+  createdAt          DateTime  @default(now())
+
+  instances RecurringInstance[]
+}
+
+model RecurringInstance {
+  id           String          @id @default(cuid())
+  templateId   String
+  template     TaskTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  taskId       String?
+  scheduledFor DateTime
+  status       RecurringStatus @default(PENDING)
+  createdAt    DateTime        @default(now())
+}
+
+// ============ DIGESTS & EMAIL ============
+
+model Digest {
+  id           String       @id @default(cuid())
+  adminId      String
+  admin        User         @relation(fields: [adminId], references: [id])
+  period       DigestPeriod
+  payload      Json
+  deliveredAt  DateTime?
+  emailStatus  String?
+  createdAt    DateTime     @default(now())
+
+  @@index([period, createdAt])
+}
+
+model EmailLog {
+  id      String   @id @default(cuid())
+  toEmail String
+  subject String
+  status  String   // sent / failed
+  error   String?
+  sentAt  DateTime @default(now())
+}
+
+// ============ NOTIFICATIONS & LOGS ============
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model AvailabilityLog {
+  id        String             @id @default(cuid())
+  workerId  String
+  worker    Worker             @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  status    AvailabilityStatus
+  from      DateTime           @default(now())
+  until     DateTime?
+  note      String?
+  createdAt DateTime           @default(now())
+}
+
+// ============ AI MEMORY & CONVERSATIONS ============
+
+model Memory {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String    @default("FACT") // FACT / PREFERENCE / DECISION / LESSON
+  content    String
+  category   String?   // client / team / process / budget / preference / other
+  source     String?   // where it came from (e.g. chat)
+  important  Boolean   @default(false) // pinned
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([userId, type])
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String    @default("New conversation")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  messages ConversationMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // user / assistant
+  content        String
+  draft          Json?
+  meta           Json? // thinking trace, recommendations, research summary
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ============ SETTINGS (key-value store) ============
+
+model Setting {
+  key        String   @id
+  value      Json
+  updatedAt  DateTime @updatedAt
+}

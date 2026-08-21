@@ -1,0 +1,592 @@
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'WORKER');
+
+-- CreateEnum
+CREATE TYPE "AvailabilityStatus" AS ENUM ('ACTIVE', 'AT_CAPACITY', 'ON_LEAVE', 'BACK_TOMORROW');
+
+-- CreateEnum
+CREATE TYPE "TaskStatus" AS ENUM ('PENDING', 'WORKING_ON_IT', 'BLOCKED', 'SUBMITTED', 'IN_REVISION', 'COMPLETED');
+
+-- CreateEnum
+CREATE TYPE "Horizon" AS ENUM ('D15', 'D30', 'D60_90');
+
+-- CreateEnum
+CREATE TYPE "VisionStatus" AS ENUM ('DRAFT', 'PROCESSING', 'LIVE', 'REJECTED');
+
+-- CreateEnum
+CREATE TYPE "Verdict" AS ENUM ('PASS', 'REVISE');
+
+-- CreateEnum
+CREATE TYPE "AiDecisionType" AS ENUM ('ASSIGNMENT', 'EVALUATION', 'AUTO_GENERATE', 'REVISION', 'REASSIGN', 'FORECAST', 'CAPACITY_SCALING', 'LEARNING_ADJUSTMENT');
+
+-- CreateEnum
+CREATE TYPE "AppealStatus" AS ENUM ('PENDING', 'UPHELD', 'REJECTED');
+
+-- CreateEnum
+CREATE TYPE "DigestPeriod" AS ENUM ('DAILY', 'WEEKLY');
+
+-- CreateEnum
+CREATE TYPE "AssignedBy" AS ENUM ('AI', 'ADMIN');
+
+-- CreateEnum
+CREATE TYPE "RecurringStatus" AS ENUM ('PENDING', 'GENERATED', 'SKIPPED');
+
+-- CreateTable
+CREATE TABLE "User" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "role" "Role" NOT NULL DEFAULT 'WORKER',
+    "avatar" TEXT,
+    "active" BOOLEAN NOT NULL DEFAULT true,
+    "emailNotifs" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Session" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "tokenHash" TEXT NOT NULL,
+    "ip" TEXT,
+    "userAgent" TEXT,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "revokedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Worker" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "seniorityTier" TEXT NOT NULL DEFAULT 'MID',
+    "baseCapacity" INTEGER NOT NULL DEFAULT 3,
+    "effectiveCapacity" INTEGER NOT NULL DEFAULT 3,
+    "scalingFactor" DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    "scalingState" TEXT NOT NULL DEFAULT 'STEADY',
+    "scalingLocked" BOOLEAN NOT NULL DEFAULT false,
+    "availability" "AvailabilityStatus" NOT NULL DEFAULT 'ACTIVE',
+    "availabilityUntil" TIMESTAMP(3),
+    "strengthsNotes" TEXT,
+
+    CONSTRAINT "Worker_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Skill" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+
+    CONSTRAINT "Skill_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "WorkerSkill" (
+    "workerId" TEXT NOT NULL,
+    "skillId" TEXT NOT NULL,
+    "proficiency" INTEGER NOT NULL DEFAULT 3,
+
+    CONSTRAINT "WorkerSkill_pkey" PRIMARY KEY ("workerId","skillId")
+);
+
+-- CreateTable
+CREATE TABLE "Product" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "targetUsers" TEXT,
+    "techStack" TEXT,
+    "goals" TEXT,
+    "fileRefs" JSONB,
+    "active" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ProductDocument" (
+    "id" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "fileRef" TEXT NOT NULL,
+    "extractedText" TEXT,
+    "embeddingsRef" TEXT,
+    "uploadedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ProductDocument_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Vision" (
+    "id" TEXT NOT NULL,
+    "adminId" TEXT NOT NULL,
+    "rawText" TEXT NOT NULL,
+    "transcript" TEXT,
+    "fileRefs" JSONB,
+    "status" "VisionStatus" NOT NULL DEFAULT 'DRAFT',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Vision_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "VisionProduct" (
+    "visionId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+
+    CONSTRAINT "VisionProduct_pkey" PRIMARY KEY ("visionId","productId")
+);
+
+-- CreateTable
+CREATE TABLE "Roadmap" (
+    "id" TEXT NOT NULL,
+    "visionId" TEXT NOT NULL,
+    "horizon" "Horizon" NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "startDate" TIMESTAMP(3),
+    "endDate" TIMESTAMP(3),
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Roadmap_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Task" (
+    "id" TEXT NOT NULL,
+    "roadmapId" TEXT,
+    "productId" TEXT,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "acceptanceCriteria" JSONB,
+    "skillTags" JSONB,
+    "priority" INTEGER NOT NULL DEFAULT 2,
+    "effortHours" INTEGER NOT NULL DEFAULT 4,
+    "status" "TaskStatus" NOT NULL DEFAULT 'PENDING',
+    "qualityThreshold" INTEGER NOT NULL DEFAULT 70,
+    "deadline" TIMESTAMP(3) NOT NULL,
+    "autoGenerated" BOOLEAN NOT NULL DEFAULT false,
+    "sourceVision" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Task_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TaskDependency" (
+    "dependencyId" TEXT NOT NULL,
+    "dependentId" TEXT NOT NULL,
+
+    CONSTRAINT "TaskDependency_pkey" PRIMARY KEY ("dependencyId","dependentId")
+);
+
+-- CreateTable
+CREATE TABLE "TaskActivity" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT,
+    "type" TEXT NOT NULL,
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TaskActivity_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TaskNote" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "authorId" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TaskNote_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BriefFeedback" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "note" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "BriefFeedback_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Assignment" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "compatibilityScore" DOUBLE PRECISION NOT NULL,
+    "rationale" TEXT,
+    "assignedBy" "AssignedBy" NOT NULL DEFAULT 'AI',
+    "assignedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "startedAt" TIMESTAMP(3),
+    "submittedAt" TIMESTAMP(3),
+    "confirmedAt" TIMESTAMP(3),
+    "active" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "Assignment_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Submission" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    "logs" TEXT,
+    "outputLinks" JSONB,
+    "files" JSONB,
+    "attemptNo" INTEGER NOT NULL DEFAULT 1,
+    "submittedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Submission_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Evaluation" (
+    "id" TEXT NOT NULL,
+    "submissionId" TEXT NOT NULL,
+    "intentScore" DOUBLE PRECISION NOT NULL,
+    "completenessScore" DOUBLE PRECISION NOT NULL,
+    "deadlineScore" DOUBLE PRECISION NOT NULL,
+    "qualityScore" DOUBLE PRECISION NOT NULL,
+    "verdict" "Verdict" NOT NULL,
+    "critique" TEXT NOT NULL,
+    "evaluatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "overriddenBy" TEXT,
+    "overriddenAt" TIMESTAMP(3),
+    "overrideNote" TEXT,
+
+    CONSTRAINT "Evaluation_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Revision" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "critiqueRef" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Revision_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Appeal" (
+    "id" TEXT NOT NULL,
+    "taskId" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "status" "AppealStatus" NOT NULL DEFAULT 'PENDING',
+    "reviewedBy" TEXT,
+    "reviewNote" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Appeal_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AiDecision" (
+    "id" TEXT NOT NULL,
+    "type" "AiDecisionType" NOT NULL,
+    "entityId" TEXT,
+    "decision" JSONB NOT NULL,
+    "rationale" TEXT,
+    "snapshot" JSONB,
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AiDecision_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "LearningAdjustment" (
+    "id" TEXT NOT NULL,
+    "aiDecisionRef" TEXT,
+    "overrideType" TEXT NOT NULL,
+    "adjustment" JSONB NOT NULL,
+    "applied" BOOLEAN NOT NULL DEFAULT false,
+    "note" TEXT,
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "LearningAdjustment_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ApiUsageLog" (
+    "id" TEXT NOT NULL,
+    "engine" TEXT NOT NULL,
+    "model" TEXT,
+    "tokensIn" INTEGER NOT NULL DEFAULT 0,
+    "tokensOut" INTEGER NOT NULL DEFAULT 0,
+    "estCostUsd" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ApiUsageLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TaskTemplate" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "acceptanceCriteria" JSONB,
+    "skillTags" JSONB,
+    "effortHours" INTEGER NOT NULL DEFAULT 4,
+    "cadence" TEXT NOT NULL,
+    "productId" TEXT,
+    "active" BOOLEAN NOT NULL DEFAULT true,
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TaskTemplate_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RecurringInstance" (
+    "id" TEXT NOT NULL,
+    "templateId" TEXT NOT NULL,
+    "taskId" TEXT,
+    "scheduledFor" TIMESTAMP(3) NOT NULL,
+    "status" "RecurringStatus" NOT NULL DEFAULT 'PENDING',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "RecurringInstance_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Digest" (
+    "id" TEXT NOT NULL,
+    "adminId" TEXT NOT NULL,
+    "period" "DigestPeriod" NOT NULL,
+    "payload" JSONB NOT NULL,
+    "deliveredAt" TIMESTAMP(3),
+    "emailStatus" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Digest_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "EmailLog" (
+    "id" TEXT NOT NULL,
+    "toEmail" TEXT NOT NULL,
+    "subject" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "error" TEXT,
+    "sentAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "EmailLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Notification" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT,
+    "read" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Notification_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ActivityLog" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT,
+    "action" TEXT NOT NULL,
+    "entityType" TEXT,
+    "entityId" TEXT,
+    "meta" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ActivityLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AvailabilityLog" (
+    "id" TEXT NOT NULL,
+    "workerId" TEXT NOT NULL,
+    "status" "AvailabilityStatus" NOT NULL,
+    "from" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "until" TIMESTAMP(3),
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AvailabilityLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Setting" (
+    "key" TEXT NOT NULL,
+    "value" JSONB NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Setting_pkey" PRIMARY KEY ("key")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Session_tokenHash_key" ON "Session"("tokenHash");
+
+-- CreateIndex
+CREATE INDEX "Session_userId_idx" ON "Session"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Worker_userId_key" ON "Worker"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Skill_name_key" ON "Skill"("name");
+
+-- CreateIndex
+CREATE INDEX "TaskActivity_taskId_idx" ON "TaskActivity"("taskId");
+
+-- CreateIndex
+CREATE INDEX "Assignment_workerId_active_idx" ON "Assignment"("workerId", "active");
+
+-- CreateIndex
+CREATE INDEX "Assignment_taskId_idx" ON "Assignment"("taskId");
+
+-- CreateIndex
+CREATE INDEX "AiDecision_type_createdAt_idx" ON "AiDecision"("type", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "ApiUsageLog_engine_createdAt_idx" ON "ApiUsageLog"("engine", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "Digest_period_createdAt_idx" ON "Digest"("period", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "Notification_userId_read_idx" ON "Notification"("userId", "read");
+
+-- CreateIndex
+CREATE INDEX "ActivityLog_createdAt_idx" ON "ActivityLog"("createdAt");
+
+-- AddForeignKey
+ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Worker" ADD CONSTRAINT "Worker_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "WorkerSkill" ADD CONSTRAINT "WorkerSkill_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "WorkerSkill" ADD CONSTRAINT "WorkerSkill_skillId_fkey" FOREIGN KEY ("skillId") REFERENCES "Skill"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductDocument" ADD CONSTRAINT "ProductDocument_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Vision" ADD CONSTRAINT "Vision_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "VisionProduct" ADD CONSTRAINT "VisionProduct_visionId_fkey" FOREIGN KEY ("visionId") REFERENCES "Vision"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "VisionProduct" ADD CONSTRAINT "VisionProduct_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Roadmap" ADD CONSTRAINT "Roadmap_visionId_fkey" FOREIGN KEY ("visionId") REFERENCES "Vision"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Task" ADD CONSTRAINT "Task_roadmapId_fkey" FOREIGN KEY ("roadmapId") REFERENCES "Roadmap"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Task" ADD CONSTRAINT "Task_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskDependency" ADD CONSTRAINT "TaskDependency_dependencyId_fkey" FOREIGN KEY ("dependencyId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskDependency" ADD CONSTRAINT "TaskDependency_dependentId_fkey" FOREIGN KEY ("dependentId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskActivity" ADD CONSTRAINT "TaskActivity_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskActivity" ADD CONSTRAINT "TaskActivity_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskNote" ADD CONSTRAINT "TaskNote_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskNote" ADD CONSTRAINT "TaskNote_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BriefFeedback" ADD CONSTRAINT "BriefFeedback_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BriefFeedback" ADD CONSTRAINT "BriefFeedback_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assignment" ADD CONSTRAINT "Assignment_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assignment" ADD CONSTRAINT "Assignment_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Submission" ADD CONSTRAINT "Submission_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Submission" ADD CONSTRAINT "Submission_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Evaluation" ADD CONSTRAINT "Evaluation_submissionId_fkey" FOREIGN KEY ("submissionId") REFERENCES "Submission"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Evaluation" ADD CONSTRAINT "Evaluation_overriddenBy_fkey" FOREIGN KEY ("overriddenBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Appeal" ADD CONSTRAINT "Appeal_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Appeal" ADD CONSTRAINT "Appeal_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Appeal" ADD CONSTRAINT "Appeal_reviewedBy_fkey" FOREIGN KEY ("reviewedBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AiDecision" ADD CONSTRAINT "AiDecision_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LearningAdjustment" ADD CONSTRAINT "LearningAdjustment_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TaskTemplate" ADD CONSTRAINT "TaskTemplate_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RecurringInstance" ADD CONSTRAINT "RecurringInstance_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "TaskTemplate"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Digest" ADD CONSTRAINT "Digest_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ActivityLog" ADD CONSTRAINT "ActivityLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AvailabilityLog" ADD CONSTRAINT "AvailabilityLog_workerId_fkey" FOREIGN KEY ("workerId") REFERENCES "Worker"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# env files
+.env
+.env.local
+.env.production
+!.env.example
+
+# build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# database
+*.db
+*.sqlite
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# uploads
+uploads/
+backend/uploads/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# test
+coverage/

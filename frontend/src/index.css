@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+    background-image:
+      radial-gradient(1100px 520px at 8% -8%, rgba(99, 102, 241, 0.1), transparent 60%),
+      radial-gradient(900px 480px at 96% -4%, rgba(217, 70, 239, 0.09), transparent 60%),
+      radial-gradient(700px 420px at 50% 110%, rgba(34, 211, 238, 0.07), transparent 60%);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-card;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-200 hover:shadow-lg hover:shadow-violet-300 hover:from-indigo-500 hover:via-violet-500 hover:to-fuchsia-500 focus:ring-violet-400;
+  }
+  .btn-secondary {
+    @apply btn border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-violet-200 hover:bg-violet-50/50 hover:text-violet-700 focus:ring-violet-200;
+  }
+  .btn-emerald {
+    @apply btn bg-emerald text-white hover:bg-emerald-600 focus:ring-emerald;
+  }
+  .btn-amber {
+    @apply btn bg-amber text-white hover:bg-amber-600 focus:ring-amber;
+  }
+  .btn-danger {
+    @apply btn bg-gradient-to-r from-rose-500 to-red-500 text-white shadow-md shadow-rose-200 hover:shadow-lg hover:shadow-rose-300 focus:ring-rose-400;
+  }
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition-all placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-200;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .table-h {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500;
+  }
+  .table-c {
+    @apply px-4 py-3 text-sm text-slate-700;
+  }
+}
+
+/* Slim, soft scrollbars that match the vibrant theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c4b5fd transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #ddd6fe;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #c4b5fd;
+}
