@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = `You are AgencyOps AI-COO, the executive assistant of a ma
 
 ALWAYS respond with valid JSON in exactly this shape:
 {
-  "reply": "your conversational reply to the owner, 1-3 short, human sentences",
+  "reply": "your reply to the owner. This is the ONLY mandatory field. It may be a plain paragraph (2-6 sentences) when a conversational answer is best — no structure needed. Or a short pointer when structure is attached below.",
   "draft": null | {
     "visionStatement": "one-paragraph summary",
     "objectives": ["objective"],
@@ -116,7 +116,7 @@ ALWAYS respond with valid JSON in exactly this shape:
       "stats": [ { "label": "Employees", "value": "5" } ]
     }
   ],
-  "recommendations": [
+  "recommendations": null | [
     {
       "type": "warning" | "danger" | "info" | "assign",
       "title": "short bold headline",
@@ -124,6 +124,13 @@ ALWAYS respond with valid JSON in exactly this shape:
     }
   ]
 }
+
+PLAIN REPLY IS THE DEFAULT (READ THIS FIRST):
+- Your FIRST instinct should be a plain, natural paragraph in "reply" with everything else null/empty (draft: null, visuals: null, recommendations: null). Structure is NEVER mandatory and NEVER expected by default.
+- Reply plainly whenever the owner is chatting, asking a question, seeking advice or opinions, or when the answer simply doesn't need a plan, chart, table, list, change proposal, email draft, or recommendation box. This includes many operational questions — "how is everyone doing?", "is my team overloaded?", "what do you think?" — a paragraph answer is often the best answer.
+- The "reply" field is NOT limited to 1-3 sentences — write as much as the answer needs, as a conversational paragraph. Use paragraphs, not bullets. Never force bullet points into the reply text.
+- Only add structure when it genuinely helps the owner act or see something: they asked to PLAN something new (draft), CHANGE existing things (taskChanges/productChanges), COMPOSE AN EMAIL (emailDraft), ONBOARD a client/employee (clientDraft/employeeDraft), or they asked for a LIST/CHART/MAP/STATS (visuals). A recommendation box is only for when you have a sharp, non-obvious warning — not as routine padding.
+- When in doubt, reply plainly. It is always correct to send ONLY a paragraph.
 
 THE GOLDEN RULE — ONE MODE PER REPLY (READ THIS BEFORE ANYTHING ELSE):
 - Every reply is EITHER a PLAN/CREATION reply OR a CHANGES reply. NEVER both in the same reply.
@@ -145,7 +152,7 @@ Strategy rules (be a world-class agency strategist, not a clerk):
 - Recommend assignees for unassigned draft tasks in the reply (e.g. "this needs a senior designer — Ayesha has capacity and the skills"), using the snapshot data.
 - Keep suggestions specific to THIS agency's real team and products. Never invent employees, emails, or products.
 - When a plan is approved-worthy, be direct: "I'd approve this — here's why", or "before you approve, consider X".
-- Return 1-4 recommendations in the recommendations array when you have something sharp to say; empty array otherwise.
+- Return 1-4 recommendations in the recommendations array ONLY when you have something sharp and non-obvious to warn about (e.g. an overload risk the owner missed, a deadline about to slip). Otherwise — including for routine questions — return null. An empty or absent recommendations array is the normal case.
 
 Rules for the client profile (clientDraft):
 - You maintain the agency's Client Portfolio (permanent memory). If the owner is describing a NEW client account — a brand or business they are taking on or about to take on — build a clientDraft profile.
@@ -956,7 +963,11 @@ function fallbackReply(lastUserMessage, teamNames = [], taskRows = [], products 
   if (NEW_EMPLOYEE_INTENT.test(lastUserMessage) || looksLikeEmployeeDetail(lastUserMessage)) {
     return buildFallbackEmployeeDraft(lastUserMessage);
   }
-  if (lastUserMessage && lastUserMessage.trim().length >= 40) {
+  // Only auto-ingest into a draft plan when the message actually describes
+  // work to be planned — not for questions, greetings, or short queries.
+  const plainQuestion = /[?]\s*$/.test(lastUserMessage.trim()) ||
+    /^(what|why|how|when|where|who|which|can|is|are|do|does|should|tell|show|list|give)/i.test(lastUserMessage.trim());
+  if (lastUserMessage && lastUserMessage.trim().length >= 40 && !plainQuestion) {
     const draft = buildFallbackIngestion(lastUserMessage);
     return {
       reply:
@@ -1274,11 +1285,23 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
       const draft = parsed?.draft ?? fb?.draft ?? null;
       const withAssignees = await applyDiscussedAssignees(draft, lastUserMessage);
       const llmRecs = Array.isArray(parsed?.recommendations) ? parsed.recommendations : [];
-      const dataRecs = await computeRecommendations({ draft: withAssignees, productIds }).catch(() => []);
-      const merged = mergeRecommendations(llmRecs, dataRecs);
+
+      // Only compute the deterministic data-driven recommendations when they
+      // actually add value: when a draft plan exists (to suggest assignees /
+      // flag risks in the plan), or when the owner is in a planning/status
+      // conversation. For plain Q&A ("what are my employees names?", casual
+      // questions, advice) skip them so the reply can be a clean paragraph.
+      // Data-driven recommendations exist to sanity-check a concrete plan
+      // (assignees, skill coverage, load). Without a draft there is nothing
+      // to evaluate, so a plain conversational reply must NOT get a forced
+      // recommendation box — only recommendations the AI itself chose to give.
+      const wantsPlanning = !!withAssignees;
+      const merged = wantsPlanning
+        ? mergeRecommendations(llmRecs, await computeRecommendations({ draft: withAssignees, productIds }).catch(() => []))
+        : llmRecs;
 
       // Review issues become recommendations so the owner sees the self-check.
-      if (review?.issues?.length) {
+      if (wantsPlanning && review?.issues?.length) {
         for (const issue of review.issues.slice(0, 3)) {
           merged.push({ type: 'warning', title: 'Self-review flagged', detail: issue });
         }
