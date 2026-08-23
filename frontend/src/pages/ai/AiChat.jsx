@@ -72,6 +72,37 @@ function Recommendations({ recs }) {
   );
 }
 
+/** Quick-answer chips for questions the AI asks the owner. Tap to answer. */
+function QuestionBlock({ questions, onAnswer, answered }) {
+  if (!questions?.length) return null;
+  return (
+    <div className="mt-3 space-y-2.5 border-t border-violet-100/70 pt-3">
+      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-600">
+        <Icon.MessageQuestion className="h-3.5 w-3.5" /> A question for you
+      </p>
+      {questions.map((q, i) => (
+        <div key={i} className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/70 to-fuchsia-50/50 p-3">
+          <p className="text-[13px] font-semibold leading-snug text-slate-800">{q.text}</p>
+          {q.options?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {q.options.map((opt, j) => (
+                <button
+                  key={j}
+                  onClick={() => onAnswer(opt)}
+                  disabled={answered}
+                  className="rounded-full border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-400 hover:bg-violet-50 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TaskRow({ task }) {
   return (
     <div className="rounded-xl border border-slate-100 bg-white/80 px-3 py-2.5 transition-colors hover:border-violet-200">
@@ -189,6 +220,9 @@ const Icon = {
   MapPin: (p) => (
     <svg {...iconProps} {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
   ),
+  MessageQuestion: (p) => (
+    <svg {...iconProps} {...p}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
+  ),
 };
 
 /** Vibrant "AI is thinking" indicator — bouncing gradient dots + sparkle. */
@@ -280,6 +314,8 @@ export default function AiChat() {
   const [convOpen, setConvOpen] = useState(false);
   const [renaming, setRenaming] = useState(null);
   const [thinkingOpen, setThinkingOpen] = useState({});
+  const [answeredQuestions, setAnsweredQuestions] = useState({});
+  const [welcomeQuestions, setWelcomeQuestions] = useState(null);
   const [modelSel, setModelSel] = useState('auto');
   const [empPolicy, setEmpPolicy] = useState({ createEnabled: true, editEnabled: true });
   const { on } = useSocket();
@@ -292,6 +328,26 @@ export default function AiChat() {
   useEffect(() => {
     if (currentConvId) localStorage.setItem('ao_current_conv', currentConvId);
   }, [currentConvId]);
+
+  // Proactive opening question: when the chat is empty (fresh conversation),
+  // ask the AI-COO for 1-2 meaningful, data-grounded questions to kick things
+  // off. Cleared the moment the owner sends anything.
+  useEffect(() => {
+    if (messages.length > 0 || busy) {
+      setWelcomeQuestions(null);
+      return;
+    }
+    let alive = true;
+    api
+      .get('/ai-chat/welcome')
+      .then((d) => {
+        if (alive) setWelcomeQuestions(d?.questions || null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [messages.length, busy]);
 
   async function refreshConversations() {
     const list = await api.get('/conversations').catch(() => []);
@@ -341,6 +397,12 @@ export default function AiChat() {
     });
   }, [on]);
 
+  async function answerQuestion(msgId, option) {
+    if (busy) return;
+    setAnsweredQuestions((p) => ({ ...p, [msgId]: true }));
+    await send(option);
+  }
+
   async function send(text) {
     const content = (text || input).trim();
     if (!content || busy) return;
@@ -375,6 +437,7 @@ export default function AiChat() {
           content: res.reply,
           draft: res.draft || null,
           visuals: res.visuals || null,
+          questions: res.questions || null,
           recommendations: res.recommendations || [],
           thinking: res.thinking || null,
           review: res.review || null,
@@ -552,6 +615,7 @@ export default function AiChat() {
         content: m.content,
         draft: m.draft || null,
         visuals: m.meta?.visuals || null,
+        questions: m.meta?.questions || null,
         recommendations: m.meta?.recommendations || [],
         thinking: m.meta?.thinking || null,
         review: m.meta?.review || null,
@@ -1055,6 +1119,31 @@ export default function AiChat() {
                 );
               })}
             </div>
+            {welcomeQuestions?.length > 0 && (
+              <div className="mt-5 w-full max-w-xl space-y-2">
+                <p className="flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-500">
+                  <Icon.MessageQuestion className="h-3.5 w-3.5" /> To start, a question for you
+                </p>
+                {welcomeQuestions.map((q, i) => (
+                  <div key={i} className="rounded-2xl border border-violet-100 bg-white/90 p-3 text-left shadow-sm">
+                    <p className="text-[13px] font-semibold leading-snug text-slate-800">{q.text}</p>
+                    {q.options?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {q.options.map((opt, j) => (
+                          <button
+                            key={j}
+                            onClick={() => send(opt)}
+                            className="rounded-full border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-400 hover:bg-violet-50 hover:shadow-md"
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1201,6 +1290,13 @@ export default function AiChat() {
                   </p>
                   <Recommendations recs={m.recommendations} />
                 </div>
+              )}
+              {m.role === 'assistant' && m.questions?.length > 0 && (
+                <QuestionBlock
+                  questions={m.questions}
+                  answered={answeredQuestions[m.id]}
+                  onAnswer={(opt) => answerQuestion(m.id, opt)}
+                />
               )}
             </div>
           </div>

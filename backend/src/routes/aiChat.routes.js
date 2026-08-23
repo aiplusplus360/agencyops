@@ -10,7 +10,7 @@ import { recordAiDecision, getSettings, getEmployeeManagementPolicy } from '../l
 import { env } from '../config/env.js';
 import { buildResearchDossier } from '../services/ai/research.js';
 import { think, answerWithWebResearch, reviewAnswer } from '../services/ai/reasoner.js';
-import { resolveModel, modelLabel } from '../services/ai/client.js';
+import { resolveModel, modelLabel, chat, parseJson } from '../services/ai/client.js';
 import { logger } from '../lib/logger.js';
 import {
   extractMemoriesFromExchange,
@@ -122,15 +122,33 @@ ALWAYS respond with valid JSON in exactly this shape:
       "title": "short bold headline",
       "detail": "one actionable sentence grounded in the RESEARCH DOSSIER"
     }
+  ],
+  "questions": null | [
+    {
+      "text": "a single, specific, meaningful question to the owner",
+      "options": ["quick answer", "quick answer", "quick answer"]
+    }
   ]
 }
 
 PLAIN REPLY IS THE DEFAULT (READ THIS FIRST):
-- Your FIRST instinct should be a plain, natural paragraph in "reply" with everything else null/empty (draft: null, visuals: null, recommendations: null). Structure is NEVER mandatory and NEVER expected by default.
+- Your FIRST instinct should be a plain, natural paragraph in "reply" with everything else null/empty (draft: null, visuals: null, recommendations: null, questions: null). Structure is NEVER mandatory and NEVER expected by default.
 - Reply plainly whenever the owner is chatting, asking a question, seeking advice or opinions, or when the answer simply doesn't need a plan, chart, table, list, change proposal, email draft, or recommendation box. This includes many operational questions — "how is everyone doing?", "is my team overloaded?", "what do you think?" — a paragraph answer is often the best answer.
 - The "reply" field is NOT limited to 1-3 sentences — write as much as the answer needs, as a conversational paragraph. Use paragraphs, not bullets. Never force bullet points into the reply text.
 - Only add structure when it genuinely helps the owner act or see something: they asked to PLAN something new (draft), CHANGE existing things (taskChanges/productChanges), COMPOSE AN EMAIL (emailDraft), ONBOARD a client/employee (clientDraft/employeeDraft), or they asked for a LIST/CHART/MAP/STATS (visuals). A recommendation box is only for when you have a sharp, non-obvious warning — not as routine padding.
 - When in doubt, reply plainly. It is always correct to send ONLY a paragraph.
+
+ASKING QUESTIONS (READ THIS — asking is allowed, but only when it truly helps):
+- You are a proactive executive assistant: you may ASK the owner questions. Questions are the way you turn a vague instruction into a sharp plan and the way you surface decisions that need the owner's call.
+- The "questions" array holds 0-2 questions you genuinely need answered to do a better job right now. Each question is { text, options } where options are 2-4 short, sensible one-tap answers the owner can pick (omit options if the answer is truly free-form). Max 2 questions per reply.
+- When to ask:
+  • PLANNING GAPS: the owner asked you to plan something but critical inputs are missing (budget, deadline, target audience, client name, launch date). Ask for the ONE or TWO most decision-critical missing pieces — never more, and never trivia.
+  • DECISIONS: the LIVE DATA shows a real fork that needs the owner's call (e.g. team at 100% capacity and new work arrives — ask whether to reassign, push a deadline, or hire; an overdue task — ask whether to reschedule or drop it).
+  • AMBIGUITY: the request could mean two very different things and the choice changes the plan (e.g. "make ads for the new product" — ask which platform or which product).
+  • CLARIFYING PREFERENCE: you need one preference that shapes everything (e.g. aggressive vs. safe timeline, budget range).
+- When NOT to ask: after a plain Q&A that already got a complete answer, when the answer is obvious from context or LIVE DATA, when the owner gave you everything needed, or when asking would be annoying busywork. Default is NOT to ask — only ask when a question genuinely moves the work forward.
+- Make questions LOGICAL and MEANINGFUL: each one must be specific to this agency's real data and the current conversation — reference real names, tasks, deadlines, numbers from LIVE DATA. Never ask generic filler ("How can I help?"), never ask something you could answer yourself from the data, and never ask more than 2 questions at once.
+- Questions ride alongside your reply (the reply still answers/acknowledges first), and the options you offer should be real, grounded choices.
 
 THE GOLDEN RULE — ONE MODE PER REPLY (READ THIS BEFORE ANYTHING ELSE):
 - Every reply is EITHER a PLAN/CREATION reply OR a CHANGES reply. NEVER both in the same reply.
@@ -451,6 +469,26 @@ function sanitizeVisuals(v) {
     out.push(block);
   }
   return out.length ? out.slice(0, 4) : null;
+}
+
+/**
+ * Validate + normalize the LLM-produced "questions" array so the frontend can
+ * render quick-answer chips safely. Returns null when nothing usable came back.
+ */
+function sanitizeQuestions(q) {
+  if (!Array.isArray(q)) return null;
+  const out = [];
+  for (const item of q) {
+    if (!item || typeof item !== 'object') continue;
+    const text = String(item.text || '').trim().slice(0, 200);
+    if (!text) continue;
+    const options = Array.isArray(item.options)
+      ? item.options.map((o) => String(o || '').trim().slice(0, 60)).filter(Boolean).slice(0, 4)
+      : [];
+    out.push(options.length ? { text, options } : { text });
+    if (out.length >= 2) break;
+  }
+  return out.length ? out : null;
 }
 
 /**
@@ -1073,6 +1111,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         productChanges: null,
         emailDraft: null,
         visuals: null,
+        questions: null,
         recommendations: [],
         fallback: false,
         fallbackReason: null,
@@ -1345,6 +1384,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         productChanges,
         emailDraft: parsed?.emailDraft ?? fb?.emailDraft ?? null,
         visuals: sanitizeVisuals(parsed?.visuals) ?? sanitizeVisuals(fb?.visuals) ?? null,
+        questions: sanitizeQuestions(parsed?.questions) ?? sanitizeQuestions(fb?.questions) ?? null,
         recommendations: merged.slice(0, 8),
         fallback: !parsed,
         fallbackReason: parsed ? null : 'ai_unreachable_or_unparsable',
@@ -1393,18 +1433,19 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
           webResearch: result.webResearch,
           taskChanges: result.taskChanges,
           productChanges: result.productChanges,
-          emailDraft: result.emailDraft,
-          visuals: result.visuals,
-          modelUsed: result.modelUsed,
-          modelLabel: result.modelLabel,
-        },
-      }).catch(() => null);
-      if (persisted?.conversationId) result.conversationId = persisted.conversationId;
-      result.conversationTitle = persisted?.conversationTitle || null;
-      return result;
-    }
+        emailDraft: result.emailDraft,
+        visuals: result.visuals,
+        questions: result.questions,
+        modelUsed: result.modelUsed,
+        modelLabel: result.modelLabel,
+      },
+    }).catch(() => null);
+    if (persisted?.conversationId) result.conversationId = persisted.conversationId;
+    result.conversationTitle = persisted?.conversationTitle || null;
+    return result;
+  }
 
-    // ===== REVIEW =====
+  // ===== REVIEW =====
     stage('review pass…');
     const review = await reviewAnswer(
       lastUserMessage,
@@ -1443,6 +1484,7 @@ export async function processAiMessage({ userId, messages = [], productIds = [],
         productChanges: result.productChanges,
         emailDraft: result.emailDraft,
         visuals: result.visuals,
+        questions: result.questions,
         modelUsed: result.modelUsed,
         modelLabel: result.modelLabel,
       },
@@ -1469,6 +1511,115 @@ router.post('/', auth, adminOnly, aiLimiter, async (req, res, next) => {
     next(e);
   }
 });
+
+/**
+ * WELCOME QUESTIONS — the AI-COO proactively asks the owner 1-2 meaningful,
+ * data-grounded questions when a fresh conversation opens. This is how the
+ * assistant starts a dialogue instead of passively waiting.
+ *
+ * Strategy: prefer LLM-generated questions grounded in the real ops snapshot
+ * (load, deadlines, skill gaps, portfolio), but degrade to a deterministic
+ * fallback that reads the same live data so the feature always works.
+ */
+router.get('/welcome', auth, adminOnly, async (req, res, next) => {
+  try {
+    const [ops, clients] = await Promise.all([
+      buildOpsContext().catch(() => null),
+      prisma.product
+        .findMany({ where: { active: true }, select: { id: true, name: true, goals: true }, orderBy: { updatedAt: 'desc' }, take: 5 })
+        .catch(() => []),
+    ]);
+    const clientLine = clients.length
+      ? clients.map((c) => `- ${c.name}${c.goals ? ` (goals: ${c.goals})` : ''}`).join('\n')
+      : 'none yet';
+
+    const snapshotText = ops?.text || 'OPERATIONS SNAPSHOT: no data yet';
+    const questions = await generateWelcomeQuestions({ snapshotText, clientLine }).catch(() => null);
+    res.json({
+      questions: sanitizeQuestions(questions) ?? buildFallbackQuestions({ ops, clientLine }),
+      conversationId: null,
+    });
+  } catch (e) {
+    logger.error(`[ai-chat] welcome error:`, e?.stack || e);
+    next(e);
+  }
+});
+
+/**
+ * Ask the LLM for 1-2 sharp questions the owner would actually care to
+ * answer, grounded in the real snapshot. Returns the raw questions array.
+ */
+async function generateWelcomeQuestions({ snapshotText, clientLine }) {
+  const content = await chat(
+    'aiWelcome',
+    [
+      {
+        role: 'system',
+        content: `You are AgencyOps AI-COO, the executive assistant of a marketing agency. The owner just opened a new chat. Instead of waiting passively, you ask ONE or TWO genuinely useful questions to kick off a productive conversation.
+
+Rules:
+- The questions MUST be specific to THIS agency's real data below. Never generic filler like "How can I help?" or "What do you want to do?"
+- Good questions surface real opportunities or decisions from the data: an overloaded team member, an urgent deadline, a skill gap blocking work, an open-pool task nobody owns, a client whose goals need a campaign plan.
+- Ask at most 2 questions. Each question: { "text": "the question", "options": ["2-4 short one-tap answers"] }.
+- The options must be sensible, grounded choices the owner could actually pick.
+- If the data is empty (no team, no tasks, no clients), ask what the agency does and who is on the team.
+Return ONLY valid JSON: { "questions": [...] }`,
+      },
+      {
+        role: 'user',
+        content: `Here is the agency's live state right now:\n\n${snapshotText}\n\nCLIENT PORTFOLIO:\n${clientLine}\n\nAsk the most valuable 1-2 questions.`,
+      },
+    ],
+    { temperature: 0.5, json: true, maxTokens: 600, attempts: 2, model: env.deepseekFlashModel }
+  );
+  const parsed = content ? parseJson(content) : null;
+  return Array.isArray(parsed?.questions) ? parsed.questions : null;
+}
+
+/** Deterministic welcome questions built straight from live ops data. */
+function buildFallbackQuestions({ ops, clientLine }) {
+  const qs = [];
+  const team = ops?.team || [];
+  const openPool = ops?.openPool || [];
+  const missingSkills = ops?.missingSkills || [];
+  const clients = (clientLine && clientLine !== 'none yet' ? clientLine.split('\n').length : 0);
+
+  // Team fully loaded with open work arriving — reassignment or prioritization call.
+  const loaded = team.filter((t) => t.utilization >= 100);
+  const hasOpen = openPool.length > 0;
+  if (loaded.length && hasOpen) {
+    qs.push({
+      text: `${loaded.map((t) => t.name).join(', ')} ${loaded.length > 1 ? 'are' : 'is'} at 100% capacity and there's open work in the pool. How should I route it?`,
+      options: ['Spread it across the team', 'Reassign from lower-priority tasks', 'Tell me more first'],
+    });
+  }
+
+  // Skill gap blocking work — hire or re-scope question.
+  if (missingSkills.length && openPool.length) {
+    qs.push({
+      text: `Open work needs skills we don't have yet (${missingSkills.slice(0, 3).join(', ')}). Want me to plan hiring, or re-scope the work?`,
+      options: ['Plan a hire', 'Re-scope the work', 'Show me which tasks'],
+    });
+  }
+
+  // New agency / empty state — foundation question.
+  if (!team.length && !openPool.length && !clients) {
+    qs.push({
+      text: "We're just getting started — tell me what your agency does and who's on the team, and I'll set everything up.",
+      options: ["Here's what we do", "I'll add my team", 'Skip for now'],
+    });
+  }
+
+  // Portfolio exists but no active plan — campaign kickoff question.
+  if (clients && !hasOpen) {
+    qs.push({
+      text: "I see active clients but no open work right now. Want me to plan the next campaign for one of them?",
+      options: ['Plan a campaign', 'Review the portfolio', 'Not right now'],
+    });
+  }
+
+  return qs.length ? qs.slice(0, 2) : null;
+}
 
 /** Save the exchange into a conversation thread (creating one if needed). */
 async function persistConversation(userId, { conversationId, titleSeed, userContent, assistantContent, draft, meta }) {
