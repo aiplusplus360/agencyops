@@ -1,8 +1,8 @@
 name: Deploy to VPS
 
+# Deployment is manual: it needs VPS_SSH_KEY / VPS_HOST / VPS_USER secrets.
+# Continuous validation lives in ci.yml; this job ships.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:

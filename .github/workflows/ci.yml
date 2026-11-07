@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: backend
+
+      # Generate the client from the schema. This needs no database, and it is
+      # the check that catches a schema that will not parse.
+      - name: Prisma generate
+        run: npx prisma generate
+        working-directory: backend
+
+      - name: Validate the schema
+        run: npx prisma validate
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/task_manager
+
+      # Every source file must at least parse. There is no test suite yet, so
+      # this is the honest floor rather than a badge that means nothing.
+      - name: Syntax check
+        run: |
+          set -e
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+        working-directory: backend
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
