@@ -37,7 +37,10 @@ services:
     container_name: task-manager-web
     restart: unless-stopped
     environment:
-      VITE_API_URL: http://localhost:4000/api
+      # The Vite dev server proxies /api and /socket.io to this target from
+      # inside the container, where the API is reachable as `api:4000` — not
+      # localhost, which would resolve to the web container itself.
+      API_PROXY_TARGET: http://api:4000
     ports:
       - "5173:5173"
     depends_on:
